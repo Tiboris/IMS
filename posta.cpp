@@ -4,7 +4,7 @@
 #include <iostream>
 
 // prichody zakaznikov 0.78min = 46.8s
-#define ARRIVAL 0.4
+#define ARRIVAL 0.85
 
 // sluzby
 #define LIST 1
@@ -42,6 +42,21 @@ using namespace std;
 //DEBUG
 uint listy = 0, pod_balik = 0, prij_balik = 0, prio = 0, ostatne = 0;
 uint s0 = 0, s1 = 0, s2 = 0;
+uint count = 0;
+
+class Timeout : public Event {
+	Process *Id;
+public:
+	Timeout(double t, Process *p): Id(p) {
+		Activate(Time + t);	// aktivovat v case Time+t
+	}
+	void Behavior() {
+		count++;	// pocitadlo zakaznikov, ktori odisli
+		Id->Out();	// vyhodit z fronty
+		Id->Cancel();	// zrusenie procesu
+		Cancel();	// zrusenie udalosti
+	}
+};
 
 class ObsZakaznika : public Process {
 	double Prichod;
@@ -49,6 +64,7 @@ class ObsZakaznika : public Process {
 
 	void Behavior() {
 		Prichod = Time;
+		Timeout *t = new Timeout(30, this);	// po 30m sa aktivuje timeout
 		// timeout?
 		// zobral zly listok?
 		double obsluha;
@@ -145,18 +161,21 @@ class ObsZakaznika : public Process {
 		if (selected == 0) {
 			s0++;
 			Seize(PrepazkaObyc[idx[selected]]);
+			t->Cancel();	// zrusenie timeoutu
 			Wait(obsluha);
 			Release(PrepazkaObyc[idx[selected]]);
 		}
 		else if (selected == 1) {
 			s1++;
 			Seize(PrepazkaPrio[idx[selected]]);
+			t->Cancel();	// zrusenie timeoutu
 			Wait(obsluha);
 			Release(PrepazkaPrio[idx[selected]]);
 		}
 		else if (selected == 2) {
 			s2++;
 			Seize(PrepazkaBalik[idx[selected]]);
+			t->Cancel();	// zrusenie timeoutu
 			Wait(obsluha);
 			Release(PrepazkaBalik[idx[selected]]);
 		}
@@ -201,5 +220,6 @@ int main(int argc, char const *argv[])
 	H_VyberListku.Output();
 	cout << "list: " << listy << " pod_balik: " << pod_balik << " prij_balik: " << prij_balik << " prio: " << prio << " ostatne: " << ostatne << endl;
 	cout << "0: " << s0 << " 1: " << s1 << " 2: " << s2 << endl;
+	cout << "Pocet zakaznikov, ktori odisli z fronty: " << count << endl;
 	return 0;
 }
