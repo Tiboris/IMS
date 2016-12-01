@@ -6,7 +6,9 @@
 
 // prichody zakaznikov 0.78min = 46.8s
 // 0.85
-#define ARRIVAL 0.78
+#define ARRIVAL 0.85
+// prichod dochodcov pre dochodky
+#define PENSION 5
 
 // sluzby
 #define LIST 1
@@ -22,14 +24,17 @@
 #define OBS_PRIO_H 30
 #define OBS_OSTATNE 3
 #define OBS_TLAC 0.25
+#define OBS_DOCH 2
 
 // kapacity
-#define PREPAZIEK_OBYC 2	// univerzalnych prepaziek
+#define PREPAZIEK_OBYC 6	// univerzalnych prepaziek
 #define PREPAZIEK_BALIK 2	// univerzalna + podanie balikov
 #define PREPAZIEK_PRIO 2	// univerzalna + financne sluzby, vypisy...
 #define TLACITIEK 2
 
 // globalne objekty
+// TODO: do dvojrozmerneho pola
+// TODO: load balancing
 Facility PrepazkaObyc[PREPAZIEK_OBYC];
 Facility PrepazkaBalik[PREPAZIEK_BALIK];
 Facility PrepazkaPrio[PREPAZIEK_PRIO];
@@ -38,13 +43,14 @@ Facility Tlacitka[TLACITIEK];
 
 Histogram H_Obsluha("Histogram doby obsluhy a cakania", 0, 1, 20);
 Histogram H_VyberListku("Histogram doby obsluhy stroja na vyber listkov", 0, 0.05, 12);
+Histogram H_ObsDoch("Histogram doby obsluhy vyplatenia dochodku", 0, 1, 20);
 
 using namespace std;
 
 //DEBUG
 uint listy = 0, pod_balik = 0, prij_balik = 0, prio = 0, ostatne = 0;
 uint s0 = 0, s1 = 0, s2 = 0;
-uint count = 0;
+uint count = 0, dochodok = 0;
 
 class Timeout : public Event {
 	Process *Id;
@@ -57,6 +63,79 @@ public:
 		Id->Out();	// vyhodit z fronty
 		Id->Cancel();	// zrusenie procesu
 		Cancel();	// zrusenie udalosti
+	}
+};
+
+class Dochodok : public Process {
+	double Prichod;
+
+	void Behavior() {
+		Prichod = Time;
+		dochodok++;
+		Timeout *t = new Timeout(30, this);	// po 30m sa aktivuje timeout
+		unsigned int selected = -1, min = std::numeric_limits<unsigned int>::max();
+		int idx[3] = {0};
+
+		// TODO: samostatny proces???
+		int id = 0;
+		for (int i = 0; i < TLACITIEK; ++i) {
+			if (Tlacitka[i].QueueLen() < Tlacitka[id].QueueLen())
+				id = i;
+		}
+		Seize(Tlacitka[id]);
+		Wait(Exponential(OBS_TLAC) + 0.16);
+		Release(Tlacitka[id]);
+		H_VyberListku(Time - Prichod);
+
+		for (int i = 0; i < PREPAZIEK_OBYC; ++i) {
+			if (PrepazkaObyc[i].QueueLen() <= PrepazkaObyc[idx[0]].QueueLen() && PrepazkaObyc[i].QueueLen() < min) {
+				idx[0] = i;
+				min = PrepazkaObyc[i].QueueLen();
+				selected = 0;
+			}
+		}
+		for (int i = 0; i < PREPAZIEK_PRIO; ++i) {
+			if (PrepazkaPrio[i].QueueLen() <= PrepazkaPrio[idx[1]].QueueLen() && PrepazkaPrio[i].QueueLen() < min) {
+				idx[1] = i;
+				min = PrepazkaPrio[i].QueueLen();
+				selected = 1;
+			}
+		}
+		for (int i = 0; i < PREPAZIEK_BALIK; ++i) {
+			if (PrepazkaBalik[i].QueueLen() <= PrepazkaBalik[idx[2]].QueueLen() && PrepazkaBalik[i].QueueLen() < min) {
+				idx[2] = i;
+				min = PrepazkaBalik[i].QueueLen();
+				selected = 2;
+			}
+		}
+
+		Wait(abs(Normal(0.17, 0.08))); // cas od vyvolania cisla po dostavenie sa zakaznika
+
+		if (selected == 0){
+			s0++;
+			Seize(PrepazkaObyc[idx[selected]]);
+			t->Cancel();	// zrusenie timeoutu
+			Wait(abs(Normal(OBS_DOCH, 1)));
+			Release(PrepazkaObyc[idx[selected]]);
+		}
+		else if (selected == 1) {
+			s1++;
+			Seize(PrepazkaPrio[idx[selected]]);
+			t->Cancel();	// zrusenie timeoutu
+			Wait(abs(Normal(OBS_DOCH, 1)));
+			Release(PrepazkaPrio[idx[selected]]);
+		}
+		else if (selected == 2) {
+			s2++;
+			Seize(PrepazkaBalik[idx[selected]]);
+			t->Cancel();	// zrusenie timeoutu
+			Wait(abs(Normal(OBS_DOCH, 1)));
+			Release(PrepazkaBalik[idx[selected]]);
+		}
+		else	// TODO: delete this
+			cout << "ZLEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE" << endl;
+
+		H_ObsDoch(Time - Prichod);
 	}
 };
 
@@ -156,6 +235,7 @@ class ObsZakaznika : public Process {
 		}
 
 		// TODO: wait -> cesta ku okienku
+		// 0.2217, 0.1652
 		Wait(abs(Normal(0.17, 0.08))); // cas od vyvolania cisla po dostavenie sa zakaznika
 
 		if (selected == 0) {
@@ -195,10 +275,19 @@ class Generator : public Event {
 	}
 };
 
+class GenDochodkov : public Event {
+	void Behavior() {
+		(new Dochodok)->Activate();
+		Activate(Time + Exponential(PENSION));
+	}
+};
+
 int main(int argc, char const *argv[])
 {
+	RandomSeed(time(NULL));
 	Init(0, 600);
 	(new Generator)->Activate();
+	(new GenDochodkov)->Activate();
 	Run();
 	
 	Print("Univerzalne prepazky\n");
@@ -215,8 +304,15 @@ int main(int argc, char const *argv[])
 	for (int i = 0; i < TLACITIEK; ++i)
 		Tlacitka[i].Output();
 	H_VyberListku.Output();
+	H_ObsDoch.Output();
+	
 	cout << "list: " << listy << " pod_balik: " << pod_balik << " prij_balik: " << prij_balik << " prio: " << prio << " ostatne: " << ostatne << endl;
 	cout << "0: " << s0 << " 1: " << s1 << " 2: " << s2 << endl;
 	cout << "Pocet zakaznikov, ktori odisli z fronty: " << count << endl;
+	cout << "Dochodkov: " << dochodok << endl;
+	for (int i = 0; i < 20; ++i) {
+		cout << " " << Normal(5, 2) << " ";
+	}
+	cout << endl;
 	return 0;
 }
