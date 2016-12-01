@@ -2,9 +2,11 @@
 
 #include <limits>	// pre std::numeric_limits<int>::max()
 #include <iostream>
+#include <cmath>
 
 // prichody zakaznikov 0.78min = 46.8s
-#define ARRIVAL 0.4
+// 0.85
+#define ARRIVAL 0.78
 
 // sluzby
 #define LIST 1
@@ -22,7 +24,7 @@
 #define OBS_TLAC 0.25
 
 // kapacity
-#define PREPAZIEK_OBYC 5	// univerzalnych prepaziek
+#define PREPAZIEK_OBYC 2	// univerzalnych prepaziek
 #define PREPAZIEK_BALIK 2	// univerzalna + podanie balikov
 #define PREPAZIEK_PRIO 2	// univerzalna + financne sluzby, vypisy...
 #define TLACITIEK 2
@@ -42,6 +44,21 @@ using namespace std;
 //DEBUG
 uint listy = 0, pod_balik = 0, prij_balik = 0, prio = 0, ostatne = 0;
 uint s0 = 0, s1 = 0, s2 = 0;
+uint count = 0;
+
+class Timeout : public Event {
+	Process *Id;
+public:
+	Timeout(double t, Process *p): Id(p) {
+		Activate(Time + t);	// aktivovat v case Time+t
+	}
+	void Behavior() {
+		count++;	// pocitadlo zakaznikov, ktori odisli
+		Id->Out();	// vyhodit z fronty
+		Id->Cancel();	// zrusenie procesu
+		Cancel();	// zrusenie udalosti
+	}
+};
 
 class ObsZakaznika : public Process {
 	double Prichod;
@@ -49,12 +66,11 @@ class ObsZakaznika : public Process {
 
 	void Behavior() {
 		Prichod = Time;
-		// timeout?
+		Timeout *t = new Timeout(30, this);	// po 30m sa aktivuje timeout
 		// zobral zly listok?
 		double obsluha;
 
-		// vyber sluzby
-		// TODO: dat wait, realne hodonty
+		// TODO: realne hodonty
 		// vyber listku
 		int id = 0;
 		for (int i = 0; i < TLACITIEK; ++i) {
@@ -62,9 +78,14 @@ class ObsZakaznika : public Process {
 				id = i;
 		}
 		Seize(Tlacitka[id]);
-		Wait(Exponential(OBS_TLAC));
+		Wait(Exponential(OBS_TLAC) + 0.16);
 		Release(Tlacitka[id]);
 		H_VyberListku(Time - Prichod);
+
+		// TODO: prioritne sluzby co dlho trvaju - certifikaty, vypisy atd.
+		//		 na prepazkach 1,2 -- Sluzba = PRIO
+		// TODO: rychle prioritne sluzby - prodej zbozi
+		//		 na prepazkach 4,5 (normalne prepazky) -- Sluzba = LIST???
 
 		// Sluzba = Uniform(1,6);
 		double random = Random();
@@ -80,44 +101,35 @@ class ObsZakaznika : public Process {
 			Sluzba = OSTATNE;
 
 		// TODO: dat realne casy a rozlozenia
-		if (Sluzba == LIST)	{// podanie/prijem listov
-			obsluha = Exponential(OBS_LIST);
+		if (Sluzba == LIST)	{	// podanie/prijem listov
+			obsluha = abs(Normal(OBS_LIST, 1));
 			listy++;
 		}
 		else if (Sluzba == POD_BALIK) {	// podanie balika
 			// pouzit prepazku pre podavanie balikov 'PrepazkaBalik'
-			obsluha = Exponential(OBS_BALIK);
+			obsluha = abs(Normal(OBS_BALIK, 2));
 			pod_balik++;
 		}
 		else if (Sluzba == PRIJ_BALIK) {// prijem balika
-			obsluha = Exponential(OBS_BALIK);
+			obsluha = abs(Normal(OBS_BALIK, 2));
 			prij_balik++;
 		}
 		else if (Sluzba == PRIO) {		// prioritne sluzby (vypis z reg. trestov, financne sluzby...)
 			// prioritne pouzit prepazku 'PrepazkaPrio'
-			obsluha = Exponential(OBS_PRIO_H);
+			obsluha = abs(Normal(OBS_PRIO_H, 15));
 			prio++;
 		}
 		else {
-			obsluha = Exponential(OBS_OSTATNE);
+			obsluha = abs(Normal(OBS_OSTATNE, 1));
 			ostatne++;
 		}
 
 		unsigned int selected = -1, min = std::numeric_limits<unsigned int>::max();
 		int idx[3] = {0};
 
-		if (Sluzba != PRIO) {
-			for (int i = 0; i < PREPAZIEK_BALIK; ++i) {
-				if (PrepazkaBalik[i].QueueLen() < PrepazkaBalik[idx[2]].QueueLen() && PrepazkaBalik[i].QueueLen() <= min) {
-					idx[2] = i;
-					min = PrepazkaObyc[i].QueueLen();
-					selected = 2;
-				}
-			}
-		}
 		if (Sluzba != PRIO && Sluzba != POD_BALIK) {
 			for (int i = 0; i < PREPAZIEK_OBYC; ++i) {
-				if (PrepazkaObyc[i].QueueLen() < PrepazkaObyc[idx[0]].QueueLen() && PrepazkaObyc[i].QueueLen() <= min) {
+				if (PrepazkaObyc[i].QueueLen() <= PrepazkaObyc[idx[0]].QueueLen() && PrepazkaObyc[i].QueueLen() < min) {
 					idx[0] = i;
 					min = PrepazkaObyc[i].QueueLen();
 					selected = 0;
@@ -126,45 +138,49 @@ class ObsZakaznika : public Process {
 		}
 		if (Sluzba != POD_BALIK) {
 			for (int i = 0; i < PREPAZIEK_PRIO; ++i) {
-				if (PrepazkaPrio[i].QueueLen() < PrepazkaPrio[idx[1]].QueueLen() && PrepazkaPrio[i].QueueLen() <= min) {
+				if (PrepazkaPrio[i].QueueLen() <= PrepazkaPrio[idx[1]].QueueLen() && PrepazkaPrio[i].QueueLen() < min) {
 					idx[1] = i;
-					min = PrepazkaObyc[i].QueueLen();
+					min = PrepazkaPrio[i].QueueLen();
 					selected = 1;
 				}
 			}
 		}
-
-		if (selected == -1) {
-			selected = 0;
-			if (Sluzba == PRIO)
-				selected = 1;
-			if (Sluzba == POD_BALIK)
-				selected = 2;
+		if (Sluzba != PRIO) {
+			for (int i = 0; i < PREPAZIEK_BALIK; ++i) {
+				if (PrepazkaBalik[i].QueueLen() <= PrepazkaBalik[idx[2]].QueueLen() && PrepazkaBalik[i].QueueLen() < min) {
+					idx[2] = i;
+					min = PrepazkaBalik[i].QueueLen();
+					selected = 2;
+				}
+			}
 		}
+
+		// TODO: wait -> cesta ku okienku
+		Wait(abs(Normal(0.17, 0.08))); // cas od vyvolania cisla po dostavenie sa zakaznika
 
 		if (selected == 0) {
 			s0++;
 			Seize(PrepazkaObyc[idx[selected]]);
+			t->Cancel();	// zrusenie timeoutu
 			Wait(obsluha);
 			Release(PrepazkaObyc[idx[selected]]);
 		}
 		else if (selected == 1) {
 			s1++;
 			Seize(PrepazkaPrio[idx[selected]]);
+			t->Cancel();	// zrusenie timeoutu
 			Wait(obsluha);
 			Release(PrepazkaPrio[idx[selected]]);
 		}
 		else if (selected == 2) {
 			s2++;
 			Seize(PrepazkaBalik[idx[selected]]);
+			t->Cancel();	// zrusenie timeoutu
 			Wait(obsluha);
 			Release(PrepazkaBalik[idx[selected]]);
 		}
 		H_Obsluha(Time - Prichod);
 
-		// cout << "Sluzba: " << Sluzba << endl;
-		// cout << "selected: " << selected << endl;
-		// cout << "obsluha: " << obsluha << endl;
 		if (selected == -1)
 		{
 			cout << "ZLEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE" << endl;
@@ -201,5 +217,6 @@ int main(int argc, char const *argv[])
 	H_VyberListku.Output();
 	cout << "list: " << listy << " pod_balik: " << pod_balik << " prij_balik: " << prij_balik << " prio: " << prio << " ostatne: " << ostatne << endl;
 	cout << "0: " << s0 << " 1: " << s1 << " 2: " << s2 << endl;
+	cout << "Pocet zakaznikov, ktori odisli z fronty: " << count << endl;
 	return 0;
 }
