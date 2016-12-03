@@ -1,8 +1,11 @@
 #include "simlib.h"
 
 #include <limits>	// pre std::numeric_limits<int>::max()
-#include <iostream>
-#include <cmath>
+#include <iostream>	// std::cerr
+#include <cmath>	// std::abs
+
+// 1 pracovny den v minutach - 10 hodin
+#define DAY 600
 
 // prichody zakaznikov 0.78min = 46.8s
 // 0.85
@@ -15,7 +18,8 @@
 #define POD_BALIK 2
 #define PRIJ_BALIK 3
 #define PRIO 4
-#define OSTATNE 5
+#define PREDAJ 5
+#define OSTATNE 6
 
 // cas obsluhy
 #define OBS_LIST 2
@@ -25,6 +29,7 @@
 #define OBS_OSTATNE 3
 #define OBS_TLAC 0.25
 #define OBS_DOCH 2
+#define OBS_PREDAJ 1
 
 // kapacity
 #define PREPAZIEK_OBYC 2	// univerzalnych prepaziek
@@ -33,28 +38,26 @@
 #define TLACITIEK 2
 
 // globalne objekty
-// TODO: do dvojrozmerneho pola
 // TODO: load balancing
-
-
 Facility Prepazka[PREPAZIEK_OBYC + PREPAZIEK_PRIO + PREPAZIEK_BALIK];
-// Facility PrepazkaObyc[PREPAZIEK_OBYC];
-// Facility PrepazkaBalik[PREPAZIEK_BALIK];
-// Facility PrepazkaPrio[PREPAZIEK_PRIO];
-
 Facility Tlacitka[TLACITIEK];
 
 Histogram H_Obsluha("Histogram doby obsluhy a cakania", 0, 1, 20);
 Histogram H_VyberListku("Histogram doby obsluhy stroja na vyber listkov", 0, 0.05, 12);
 Histogram H_ObsDoch("Histogram doby obsluhy vyplatenia dochodku", 0, 1, 20);
 
-using namespace std;
+Stat pod_balik("Obsluha podania balikov");
+Stat prij_balik("Obsluha prijatia balikov");
+Stat listy("Obsluha listovych zasielok");
+Stat prio("Obsluha prioritnych sluzieb");
+Stat predaj("Obsluha predaja kolkov, znamok, obalok...");
+Stat ostatne("Obsluha ostatnych sluzieb");
+Stat dochodok("Obsluha vyplacania dochodkov");
 
-//DEBUG
-uint listy = 0, pod_balik = 0, prij_balik = 0, prio = 0, ostatne = 0;
-uint sel_window[3];
-uint s0 = 0, s1 = 0, s2 = 0;
-uint count = 0, dochodok = 0;
+// using namespace std;
+
+unsigned int sel_window[3];
+unsigned int count = 0;
 
 class Timeout : public Event {
 	Process *Id;
@@ -64,9 +67,9 @@ public:
 	}
 	void Behavior() {
 		count++;	// pocitadlo zakaznikov, ktori odisli
-		Id->Out();	// vyhodit z fronty
-		Id->Cancel();	// zrusenie procesu
-		Cancel();	// zrusenie udalosti
+		// Id->Out();	// vyhodit z fronty
+		delete Id;	// zrusenie procesu
+		// Cancel();	// zrusenie udalosti
 	}
 };
 
@@ -75,11 +78,11 @@ class Dochodok : public Process {
 
 	void Behavior() {
 		Prichod = Time;
-		dochodok++;
+		double obsluha = std::abs(Normal(OBS_DOCH, 1));
 		Timeout *t = new Timeout(30, this);	// po 30m sa aktivuje timeout
-		unsigned int selected = -1, min = std::numeric_limits<unsigned int>::max();
+		int selected = -1;
+		unsigned int min = std::numeric_limits<unsigned int>::max();
 
-		// TODO: samostatny proces???
 		int id = 0;
 		for (int i = 0; i < TLACITIEK; ++i) {
 			if (Tlacitka[i].QueueLen() < Tlacitka[id].QueueLen())
@@ -106,22 +109,24 @@ class Dochodok : public Process {
 		}
 
 		// cas od vyvolania cisla po dostavenie sa zakaznika
-		Wait(abs(Normal(0.17, 0.08)));
+		Wait(std::abs(Normal(0.17, 0.08)));
 
 		if (selected == -1) { // TODO: delete this
-			cerr << "FATAL(in Dochodok::Behavior): nebola vybrana prepazka, neviem programovat! :'(" << endl;
+			std::cerr << "FATAL(in Dochodok::Behavior): nebola vybrana prepazka, neviem programovat! :'(" << std::endl;
 			exit(9);
 		}
 
 		sel_window[selected]++;
 
 		Seize(Prepazka[idx]);
-		t->Cancel();	// zrusenie timeoutu
-		Wait(abs(Normal(OBS_DOCH, 1)));
+		delete t;	// zrusenie timeoutu
+		Wait(obsluha);
 		Release(Prepazka[idx]);
 
 		// histogram obsluhy vyplacania dochodkov
+		H_Obsluha(Time - Prichod);
 		H_ObsDoch(Time - Prichod);
+		dochodok(obsluha);
 	}
 };
 
@@ -132,7 +137,7 @@ class ObsZakaznika : public Process {
 	void Behavior() {
 		Prichod = Time;
 		Timeout *t = new Timeout(30, this);	// po 30m sa aktivuje timeout
-		// zobral zly listok?
+		// TODO: zobral zly listok a vrati sa po novy? 
 		double obsluha;
 
 		// TODO: realne hodonty
@@ -147,11 +152,6 @@ class ObsZakaznika : public Process {
 		Release(Tlacitka[id]);
 		H_VyberListku(Time - Prichod);
 
-		// TODO: prioritne sluzby co dlho trvaju - certifikaty, vypisy atd.
-		//		 na prepazkach 1,2 -- Sluzba = PRIO
-		// TODO: rychle prioritne sluzby - prodej zbozi
-		//		 na prepazkach 4,5 (normalne prepazky) -- Sluzba = LIST???
-
 		// Sluzba = Uniform(1,6);
 		double random = Random();
 		if (random <= 0.44)
@@ -160,36 +160,51 @@ class ObsZakaznika : public Process {
 			Sluzba = POD_BALIK;
 		else if (random > 0.6 && random <= 0.78)
 			Sluzba = PRIJ_BALIK;
-		else if (random > 0.78 && random <= 0.793)
+		else if (random > 0.78 && random <= 0.793) {
+			// prioritne sluzby co dlho trvaju - certifikaty, vypisy atd.
+			// na prepazkach 1,2 -- Sluzba = PRIO
 			Sluzba = PRIO;
+			Priority = 1;
+		}
+		else if (random > 0.793 && random <= 0.803) {
+			// rychle prioritne sluzby - prodej zbozi
+			// na prepazkach 4,5 (normalne prepazky) -- Sluzba = PREDAJ
+			Sluzba = PREDAJ;
+			Priority = 2;
+		}
 		else
 			Sluzba = OSTATNE;
 
 		// TODO: dat realne casy a rozlozenia
 		if (Sluzba == LIST)	{	// podanie/prijem listov
-			obsluha = abs(Normal(OBS_LIST, 1));
-			listy++;
+			obsluha = std::abs(Normal(OBS_LIST, 1));
+			listy(obsluha);
 		}
 		else if (Sluzba == POD_BALIK) {	// podanie balika
 			// pouzit prepazku pre podavanie balikov 'PrepazkaBalik'
-			obsluha = abs(Normal(OBS_BALIK, 2));
-			pod_balik++;
+			obsluha = std::abs(Normal(OBS_BALIK, 2));
+			pod_balik(obsluha);
 		}
 		else if (Sluzba == PRIJ_BALIK) {// prijem balika
-			obsluha = abs(Normal(OBS_BALIK, 2));
-			prij_balik++;
+			obsluha = std::abs(Normal(OBS_BALIK, 2));
+			prij_balik(obsluha);
 		}
 		else if (Sluzba == PRIO) {		// prioritne sluzby (vypis z reg. trestov, financne sluzby...)
 			// prioritne pouzit prepazku 'PrepazkaPrio'
-			obsluha = abs(Normal(OBS_PRIO_H, 15));
-			prio++;
+			obsluha = std::abs(Normal(OBS_PRIO_H, 15));
+			prio(obsluha);
+		}
+		else if (Sluzba == PREDAJ) {
+			obsluha = std::abs(Normal(OBS_PREDAJ, 0.5));
+			predaj(obsluha);
 		}
 		else {
-			obsluha = abs(Normal(OBS_OSTATNE, 1));
-			ostatne++;
+			obsluha = std::abs(Normal(OBS_OSTATNE, 1));
+			ostatne(obsluha);
 		}
 
-		unsigned int selected = -1, min = std::numeric_limits<unsigned int>::max();
+		int selected = -1;
+		unsigned int min = std::numeric_limits<unsigned int>::max();
 		int idx = 0;
 
 		for (int i = 0; i < (PREPAZIEK_OBYC + PREPAZIEK_PRIO + PREPAZIEK_BALIK); ++i) {
@@ -222,21 +237,21 @@ class ObsZakaznika : public Process {
 
 		// TODO: wait -> cesta ku okienku
 		// 0.2217, 0.1652
-		Wait(abs(Normal(0.17, 0.08))); // cas od vyvolania cisla po dostavenie sa zakaznika
+		Wait(std::abs(Normal(0.17, 0.08))); // cas od vyvolania cisla po dostavenie sa zakaznika
 
 		if (selected == -1) { // TODO: delete this
-			cerr << "FATAL(in ObsZakaznika::Behavior): nebola vybrana prepazka, neviem programovat! :'(" << endl;
-			cerr << "DEBUG:" << endl;
-			cerr << "       Sluzba: " << Sluzba << endl;
-			cerr << "       Min: " << Min << endl;
-			cerr << "       Idx: " << idx << endl;
+			std::cerr << "FATAL(in ObsZakaznika::Behavior): nebola vybrana prepazka, neviem programovat! :'(" << std::endl;
+			std::cerr << "DEBUG:" << std::endl;
+			std::cerr << "       Sluzba: " << Sluzba << std::endl;
+			std::cerr << "       Min: " << min << std::endl;
+			std::cerr << "       Idx: " << idx << std::endl;
 			exit(10);
 		}
 
 		sel_window[selected]++;
 
 		Seize(Prepazka[idx]);
-		t->Cancel();	// zrusenie timeoutu
+		delete t;	// zrusenie timeoutu
 		Wait(obsluha);
 		Release(Prepazka[idx]);
 
@@ -245,25 +260,29 @@ class ObsZakaznika : public Process {
 };
 
 class Generator : public Event {
+	double Interval;
+	int Type;
+
 	void Behavior() {
-		(new ObsZakaznika)->Activate();
-		Activate(Time + Exponential(ARRIVAL));
+		if (Type == 0)
+			(new ObsZakaznika)->Activate();
+		else
+			(new Dochodok)->Activate();
+			
+		Activate(Time + Exponential(Interval));
 	}
+public:
+	Generator(double interval, int type) : Interval(interval), Type(type) { Activate(); }
 };
 
-class GenDochodkov : public Event {
-	void Behavior() {
-		(new Dochodok)->Activate();
-		Activate(Time + Exponential(PENSION));
-	}
-};
-
-int main(int argc, char const *argv[])
+int main(int argc, char **argv)
 {
 	RandomSeed(time(NULL));
-	Init(0, 600);
-	(new Generator)->Activate();
-	(new GenDochodkov)->Activate();
+	Init(0, DAY);
+	// generator prichodov zakaznikov
+	new Generator(ARRIVAL, 0);
+	// generator prichodov dochodcov pre dochodky
+	new Generator(PENSION, 1);
 	Run();
 	
 	for (int i = 0; i < (PREPAZIEK_OBYC + PREPAZIEK_PRIO + PREPAZIEK_BALIK); ++i) {
@@ -283,12 +302,20 @@ int main(int argc, char const *argv[])
 	H_VyberListku.Output();
 	H_ObsDoch.Output();
 	
-	cout << "list: " << listy << " pod_balik: " << pod_balik << " prij_balik: " << prij_balik << " prio: " << prio << " ostatne: " << ostatne << endl;
 	for (int i = 0; i < 3; ++i) {
-		cout << " sel" << i << ": " << sel_window[i];
+		Print("Selected%d: %d ", i, sel_window[i]);
 	}
-	cout << "\nPocet zakaznikov, ktori odisli z fronty: " << count << endl;
-	cout << "Dochodkov: " << dochodok << endl;
+	Print("\nPocet zakaznikov, ktori odisli z fronty: \n", count);
+
+	listy.Output();
+	pod_balik.Output();
+	prij_balik.Output();
+	prio.Output();
+	predaj.Output();
+	dochodok.Output();
+	ostatne.Output();
+
+	SIMLIB_statistics.Output();
 
 	return 0;
 }
