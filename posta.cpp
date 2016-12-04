@@ -4,6 +4,8 @@
 #include <iostream>	// std::cerr
 #include <cmath>	// std::abs
 #include <vector>
+#include <string>
+#include <sstream>
 
 // 1 pracovny den v minutach - 10 hodin
 #define DAY 600
@@ -25,8 +27,7 @@
 // cas obsluhy
 #define OBS_LIST 2
 #define OBS_BALIK 3
-#define OBS_PRIO_L 2
-#define OBS_PRIO_H 30
+#define OBS_PRIO 30
 #define OBS_OSTATNE 3
 #define OBS_TLAC 0.25
 #define OBS_DOCH 2
@@ -60,7 +61,7 @@ double P_POD_BALIK = P_LIST + 0.16;
 double P_PRIJ_BALIK = P_POD_BALIK + 0.18;
 double P_PRIO = P_PRIJ_BALIK + 0.013;
 double P_PREDAJ = P_PRIO + 0.01;
-double P_OSTATNE = 1.0 - P_LIST - P_POD_BALIK - P_PRIJ_BALIK - P_PRIO - P_PREDAJ;
+double P_OSTATNE = 1.0 - P_PREDAJ;
 
 // pocitadlo pre pocet pouziti niektroeho z typov prepaziek
 // * sel_window[0] - obycajna prapazka
@@ -171,19 +172,19 @@ class ObsZakaznika : public Process {
 
 		// vyber typu sluzby
 		double random = Random();
-		if (random <= 0.44)
+		if (random <= P_LIST)
 			Sluzba = LIST;
-		else if (random > 0.44 && random <= 0.6)
+		else if (random > P_LIST && random <= P_POD_BALIK)
 			Sluzba = POD_BALIK;
-		else if (random > 0.6 && random <= 0.78)
+		else if (random > P_POD_BALIK && random <= P_PRIJ_BALIK)
 			Sluzba = PRIJ_BALIK;
-		else if (random > 0.78 && random <= 0.793) {
+		else if (random > P_PRIJ_BALIK && random <= P_PRIO) {
 			// prioritne sluzby co dlho trvaju - certifikaty, vypisy atd.
 			// na prepazkach 1,2 -- Sluzba = PRIO
 			Sluzba = PRIO;
 			Priority = 1;
 		}
-		else if (random > 0.793 && random <= 0.803) {
+		else if (random > P_PRIO && random <= P_PREDAJ) {
 			// rychle prioritne sluzby - prodej zbozi
 			// na prepazkach 4,5 (normalne prepazky) -- Sluzba = PREDAJ
 			Sluzba = PREDAJ;
@@ -209,7 +210,7 @@ class ObsZakaznika : public Process {
 		}
 		else if (Sluzba == PRIO) {	// prioritne sluzby (vypis z reg. trestov, financne sluzby...)
 			// prioritne pouzit prepazku 'PrepazkaPrio'
-			obsluha = std::abs(Normal(OBS_PRIO_H, 15));
+			obsluha = Exponential(OBS_PRIO) + 5;
 			prio(obsluha);
 		}
 		else if (Sluzba == PREDAJ) {	// doplnkovy predaj - obalky, krabice...
@@ -293,7 +294,7 @@ public:
 // TODO: urobit z toho class
 // struktura pre argumenty programu
 typedef struct ARGS {
-	int pocet_dni;			// pocet simulovanych dni
+	int experiment;			// pocet simulovanych dni
 	double prichod_zak;		// rozlozenie prichodu zakaznikov
 	double prichod_doch;	// rozlozenie prichodu dochodcov
 	int pocet_obyc;			// pocet prepazok pre obycajne sluzby
@@ -309,15 +310,15 @@ int getArgs(int argc, char **argv, ARGS *arguments) {
 	// TODO: zatial len provizorne, ak bude cas tak sa upravi alebo urobit z ARGS class
 	if (argc == 10) {
 		char * pEnd;
-		arguments->pocet_dni = std::strtol(argv[1], &pEnd, 10);
-		if (arguments->pocet_dni == -1 || *pEnd != '\0')
-			arguments->pocet_dni = 1;
+		arguments->experiment = std::strtol(argv[1], &pEnd, 10);
+		if (arguments->experiment == -1 || *pEnd != '\0')
+			arguments->experiment = 0;
 
-		arguments->prichod_zak = std::strtol(argv[2], &pEnd, 10);
+		arguments->prichod_zak = std::strtod(argv[2], &pEnd);
 		if (arguments->prichod_zak == -1 || *pEnd != '\0')
 			arguments->prichod_zak = ARRIVAL;
 
-		arguments->prichod_doch = std::strtol(argv[3], &pEnd, 10);
+		arguments->prichod_doch = std::strtod(argv[3], &pEnd);
 		if (arguments->prichod_doch == -1 || *pEnd != '\0')
 			arguments->prichod_doch = PENSION;
 
@@ -333,24 +334,24 @@ int getArgs(int argc, char **argv, ARGS *arguments) {
 		if (arguments->pocet_balik == -1 || *pEnd != '\0')
 			arguments->pocet_balik = PREPAZIEK_BALIK;
 
-		arguments->p_prij_balik = std::strtol(argv[7], &pEnd, 10);
+		arguments->p_prij_balik = std::strtod(argv[7], &pEnd);
 		if (arguments->p_prij_balik == -1 || *pEnd != '\0')
-			arguments->p_prij_balik = P_PRIJ_BALIK;
+			arguments->p_prij_balik = 0.18;
 
-		arguments->p_pod_balik = std::strtol(argv[8], &pEnd, 10);
+		arguments->p_pod_balik = std::strtod(argv[8], &pEnd);
 		if (arguments->p_pod_balik == -1 || *pEnd != '\0')
-			arguments->p_pod_balik = P_POD_BALIK;
+			arguments->p_pod_balik = 0.16;
 
-		arguments->p_list = std::strtol(argv[9], &pEnd, 10);
+		arguments->p_list = std::strtod(argv[9], &pEnd);
 		if (arguments->p_list == -1 || *pEnd != '\0')
 			arguments->p_list = P_LIST;
 
 		return 0;
 	}
 	else {	// nastavit na defaultne hodnoty
-		arguments->pocet_dni = 1;
+		arguments->experiment = 0;
 		arguments->prichod_zak = ARRIVAL;
-		arguments->prichod_doch = PENSION;
+		arguments->prichod_doch = 0;
 		arguments->pocet_obyc = PREPAZIEK_OBYC;
 		arguments->pocet_prio = PREPAZIEK_PRIO;
 		arguments->pocet_balik = PREPAZIEK_BALIK;
@@ -366,9 +367,16 @@ void setGlobals(ARGS *arguments) {
 	PREPAZIEK_OBYC = arguments->pocet_obyc;
 	PREPAZIEK_PRIO = arguments->pocet_prio;
 	PREPAZIEK_BALIK = arguments->pocet_balik;
-	P_PRIJ_BALIK = arguments->p_prij_balik;
-	P_POD_BALIK = arguments->p_pod_balik;
 	P_LIST = arguments->p_list;
+	P_POD_BALIK = P_LIST + arguments->p_pod_balik;
+	P_PRIJ_BALIK = P_POD_BALIK + arguments->p_prij_balik;
+	P_PRIO = P_PRIJ_BALIK + 0.013;
+	P_PREDAJ = P_PRIO + 0.01;
+	P_OSTATNE = 1.0 - P_PREDAJ;
+	if (P_OSTATNE < 0) {
+		std::cerr << "Zle nastavene pravdepodobnosti sluzieb" << std::endl;
+		exit(2);
+	}
 }
 
 int main(int argc, char **argv)
@@ -377,13 +385,6 @@ int main(int argc, char **argv)
 	ARGS arguments;
 	if (getArgs(argc, argv, &arguments) == 0)
 		setGlobals(&arguments);
-
-	// std::cout << arguments.pocet_dni << std::endl;
-	// std::cout << arguments.prichod_zak << std::endl;
-	// std::cout << arguments.prichod_doch << std::endl;
-	// std::cout << arguments.pocet_obyc << std::endl;
-	// std::cout << arguments.pocet_prio << std::endl;
-	// std::cout << arguments.pocet_balik << std::endl;
 
 	// vytvorenie potrebneho poctu prepazok
 	char const *nazov;
@@ -403,14 +404,19 @@ int main(int argc, char **argv)
 	// generator prichodov zakaznikov
 	new Generator(arguments.prichod_zak, 0);
 	// generator prichodov dochodcov pre dochodky
-	if (arguments.prichod_doch != 0) {	 // simuluje sa aj vydavanie dochodkov 
+	if (arguments.prichod_doch != 0) {	 // simuluje sa aj vydavanie dochodkov
 		new Generator(arguments.prichod_doch, 1);
 	}
 
 	Run();
+
+	// nastavenie nazvu vystupneho suboru
+	std::ostringstream ss;
+	ss << "exp" << arguments.experiment << "-posta.out";
+	std::string filename = ss.str();
+	SetOutput(filename.c_str());
 	
 	// Vypis statistik a histogramov
-	SetOutput("posta-prepazky.out");
 	for (int i = 0; i < (PREPAZIEK_OBYC + PREPAZIEK_PRIO + PREPAZIEK_BALIK); ++i) {
 		if (i == 0)
 			Print("Univerzalne prepazky\n");
@@ -422,21 +428,14 @@ int main(int argc, char **argv)
 	}
 	
 	H_Obsluha.Output();
-	for (int i = 0; i < 3; ++i) {
-		Print("Selected%d: %d ", i, sel_window[i]);
-	}
-	Print("\nPocet zakaznikov, ktori odisli z fronty: %d\n", count);
 
-	SetOutput("posta-vyvolavanie_zak.out");
 	Print("Vyvolavaci system\n");
 	for (int i = 0; i < TLACITIEK; ++i)
 		Tlacitka[i].Output();
 	H_VyberListku.Output();
 	
-	SetOutput("posta-dochodky.out");
 	H_ObsDoch.Output();
 	
-	SetOutput("posta-sluzby.out");
 	listy.Output();
 	pod_balik.Output();
 	prij_balik.Output();
@@ -444,6 +443,12 @@ int main(int argc, char **argv)
 	predaj.Output();
 	dochodok.Output();
 	ostatne.Output();
+
+	Print("Pocet poziadavok spracovanych typom prepazky\n");
+	for (int i = 0; i < 3; ++i) {
+		Print("Typ %d: %d ", i, sel_window[i]);
+	}
+	Print("\nPocet zakaznikov, ktori odisli z fronty: %d\n", count);
 
 	return 0;
 }
