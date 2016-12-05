@@ -34,7 +34,7 @@
 #define OBS_PREDAJ 1
 
 // pocet liniek
-#define TLACITIEK 2
+#define ZARIADENI 2
 double PREPAZIEK_OBYC = 2;	// univerzalnych prepaziek
 double PREPAZIEK_BALIK = 2;	// univerzalna + podanie balikov
 double PREPAZIEK_PRIO = 2;	// univerzalna + financne sluzby, vypisy...
@@ -42,7 +42,7 @@ double PREPAZIEK_PRIO = 2;	// univerzalna + financne sluzby, vypisy...
 // obsluzne linky
 // TODO: load balancing
 std::vector<Facility*> Prepazka;
-Facility Tlacitka[TLACITIEK];
+Facility VyvSystem[ZARIADENI];
 
 Histogram H_Obsluha("Histogram doby obsluhy a cakania", 0, 1, 20);
 Histogram H_VyberListku("Histogram doby obsluhy stroja na vyber listkov", 0, 0.05, 12);
@@ -96,12 +96,12 @@ class Dochodok : public Process {
 		// vyber najkratsej fronty k tlacitkam vyvolavacieho systemu
 		int id = 0;
 		for (int i = 0; i < TLACITIEK; ++i) {
-			if (Tlacitka[i].QueueLen() < Tlacitka[id].QueueLen())
+			if (VyvSystem[i].QueueLen() < VyvSystem[id].QueueLen())
 				id = i;
 		}
-		Seize(Tlacitka[id]);
+		Seize(VyvSystem[id]);
 		Wait(Exponential(OBS_TLAC) + 0.16);
-		Release(Tlacitka[id]);
+		Release(VyvSystem[id]);
 		H_VyberListku(Time - Prichod);
 
 		// zaradenie do najkratsej fronty
@@ -162,12 +162,12 @@ class ObsZakaznika : public Process {
 		// vyber najkratsej fronty k tlacitkam vyvolavacieho systemu
 		int id = 0;
 		for (int i = 0; i < TLACITIEK; ++i) {
-			if (Tlacitka[i].QueueLen() < Tlacitka[id].QueueLen())
+			if (VyvSystem[i].QueueLen() < VyvSystem[id].QueueLen())
 				id = i;
 		}
-		Seize(Tlacitka[id]);
+		Seize(VyvSystem[id]);
 		Wait(Exponential(OBS_TLAC) + 0.16);
-		Release(Tlacitka[id]);
+		Release(VyvSystem[id]);
 		H_VyberListku(Time - Prichod);
 
 		// vyber typu sluzby
@@ -431,7 +431,7 @@ int main(int argc, char **argv)
 
 	Print("Vyvolavaci system\n");
 	for (int i = 0; i < TLACITIEK; ++i)
-		Tlacitka[i].Output();
+		VyvSystem[i].Output();
 	H_VyberListku.Output();
 	
 	H_ObsDoch.Output();
