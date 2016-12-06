@@ -26,23 +26,23 @@ run:
 	# zakladny model
 	./posta
 	# vyplacanie dochodkov
-	./posta 1 -1 -1 -1 -1 -1 -1 -1 -1
-	# vianoce 1 - nevyplacanie dochodkov, castejsie prichody, viac listovych sluzieb a balikov
-	./posta 2 0.6 0 -1 -1 -1 0.2 0.23 0.51
-	# vianoce 2 - ako vianoce1 aj s vyplacanim dochodkov - otvorene 10/10
-	./posta 3 0.6 0 6 2 2 0.2 0.23 0.51
-	# vianoce 1.1 - +1 univerzalna prepazka - 7/10 otvorenych
-	./posta 4 0.6 0 3 -1 -1 0.2 0.23 0.51
-	# vianoce 1.2 - +2 univerzalna prepazka - 8/10 otvorenych
-	./posta 5 0.6 0 4 -1 -1 0.2 0.23 0.51
-	# vianoce 1.3 - +3 univerzalna prepazka - 9/10 otvorenych
-	./posta 6 0.6 0 5 -1 -1 0.2 0.23 0.51
-	
-	#
-	# TODO: DALSIE ???
-	# ./posta 7 -1 -1 -1 -1 -1 -1 -1 -1
-	# ./posta 8 -1 -1 -1 -1 -1 -1 -1 -1
-	# ./posta 9 -1 -1 -1 -1 -1 -1 -1 -1
+	./posta 1 -1 -1 -1 -1 -1 -1 -1 -1 0
+	# vyplacanie dochodkov + load balance
+	./posta 2 -1 -1 -1 -1 -1 -1 -1 -1 1
+	# vianoce 1.1 - nevyplacanie dochodkov, castejsie prichody, viac listovych sluzieb a balikov
+	./posta 3 0.6 0 -1 -1 -1 0.2 0.23 0.51 0
+	# vianoce 1.2 - ako vianoce1 aj s vyplacanim dochodkov
+	./posta 4 0.6 -1 -1 -1 -1 0.2 0.23 0.51 0
+	# vianoce 2.1 - ako vianoce1 aj s vyplacanim dochodkov load balance
+	./posta 5 0.6 -1 -1 -1 -1 0.2 0.23 0.51 1
+	# vianoce 2.1 - +1 prepazka na baliky - 7 otvorenych
+	./posta 6 0.6 0 2 2 3 0.2 0.23 0.51 0
+	# vianoce 2.2 - +1 na baliky -1 czech point- 6 otvorenych
+	./posta 7 0.6 0 2 1 3 0.2 0.23 0.51 0
+	# vianoce 2.3 - +1 univerzalna prepazka - 7 otvorenych
+	./posta 8 0.6 0 3 2 3 0.2 0.23 0.51 0
+	# vianoce 2.4 - +1 na baliky +1 univerzalna a vyplacanie dochodkov - 7 otvorenych
+	./posta 9 0.6 -1 3 2 3 0.2 0.23 0.51 0
 
 clean:
 	rm $(EXECUTABLE) exp*
